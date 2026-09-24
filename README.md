@@ -1,6 +1,6 @@
 # Rapid Holster
 
-Version 2.0.0 · by RapidUrsa
+Version 2.0.1 · by RapidUrsa
 
 Cosmetic hip and back holstering with a movable equipped-item icon button
 and animated torso attachment. Run `gradlew.bat clean runClient` from this project on Windows.

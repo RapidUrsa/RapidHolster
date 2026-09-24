@@ -11,6 +11,8 @@ import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
+import net.runelite.api.InventoryID;
+import net.runelite.api.ItemContainer;
 import net.runelite.api.ItemID;
 import net.runelite.api.Model;
 import net.runelite.api.ModelData;
@@ -111,6 +113,7 @@ public class RapidHolsterPlugin extends Plugin
     @Override
     protected void startUp()
     {
+        updateMountedHandoffSupport();
         customPanel.bind(this);
         customNavigation = NavigationButton.builder().tooltip("Rapid Holster")
             .icon(CustomWeaponPanel.icon()).priority(8).panel(customPanel).build();
@@ -124,6 +127,7 @@ public class RapidHolsterPlugin extends Plugin
     @Override
     protected void shutDown()
     {
+        configManager.unsetConfiguration(CONFIG_GROUP, "mountedHandoffSupported");
         customPanel.unbind();
         if (customNavigation != null) toolbar.removeNavigation(customNavigation);
         customNavigation = null;
@@ -179,6 +183,7 @@ public class RapidHolsterPlugin extends Plugin
     @Subscribe
     public void onGameTick(GameTick event)
     {
+        updateMountedHandoffSupport();
         if (combatDrawTicks > 0)
         {
             combatDrawTicks--;
@@ -189,6 +194,12 @@ public class RapidHolsterPlugin extends Plugin
     @Subscribe
     public void onBeforeRender(BeforeRender event)
     {
+        if (mountedRiderOwnsHolsters())
+        {
+            destroyObject();
+            destroyShield();
+            return;
+        }
         Player player = client.getLocalPlayer();
         if (player == null || (holsteredWeapon == null || !holsteredWeapon.isActive())
             && (holsteredShield == null || !holsteredShield.isActive()))
@@ -220,7 +231,19 @@ public class RapidHolsterPlugin extends Plugin
     @Subscribe
     public void onConfigChanged(ConfigChanged event)
     {
+        if ("rapidursamounts".equals(event.getGroup())
+            && "mountedHolsterActive".equals(event.getKey()))
+        {
+            if (!mountedRiderOwnsHolsters()) clientThread.invokeLater(this::refresh);
+            return;
+        }
         if (!CONFIG_GROUP.equals(event.getGroup()))
+        {
+            return;
+        }
+        // This heartbeat changes every tick. It is not a placement setting;
+        // rebuilding here continually resets the torso attachment while running.
+        if ("mountedHandoffSupported".equals(event.getKey()))
         {
             return;
         }
@@ -229,12 +252,45 @@ public class RapidHolsterPlugin extends Plugin
         clientThread.invokeLater(this::refresh);
     }
 
+    private void updateMountedHandoffSupport()
+    {
+        if (client.getGameState() == GameState.LOGGED_IN && config.holstered())
+            configManager.setConfiguration(CONFIG_GROUP, "mountedHandoffSupported", System.currentTimeMillis());
+        else
+            configManager.unsetConfiguration(CONFIG_GROUP, "mountedHandoffSupported");
+    }
+
+    private boolean mountedRiderOwnsHolsters()
+    {
+        String timestamp = configManager.getConfiguration("rapidursamounts", "mountedHolsterActive");
+        if (timestamp == null) return false;
+        try
+        {
+            long age = System.currentTimeMillis() - Long.parseLong(timestamp);
+            return age >= 0 && age < 2000;
+        }
+        catch (NumberFormatException ignored)
+        {
+            return false;
+        }
+    }
+
     private void refresh()
     {
         Player player = client.getLocalPlayer();
         if (client.getGameState() != GameState.LOGGED_IN || player == null
             || player.getPlayerComposition() == null)
         {
+            return;
+        }
+
+        if (mountedRiderOwnsHolsters())
+        {
+            restoreHeldWeapon();
+            restoreShield();
+            restoreNaturalPose();
+            destroyObject();
+            destroyShield();
             return;
         }
 
@@ -315,6 +371,14 @@ public class RapidHolsterPlugin extends Plugin
         }
         PlayerComposition composition = player.getPlayerComposition();
         int kit = composition.getEquipmentIds()[WEAPON_SLOT];
+        // After a mounted handoff, the player's appearance can still contain
+        // Holster's temporary empty slot. The actual equipment is authoritative
+        // unless this composition is the one we deliberately hid ourselves.
+        if (kit <= ITEM_OFFSET && composition != hiddenWeaponComposition)
+        {
+            int equipped = wornItemId(WEAPON_SLOT);
+            if (equipped >= 0) kit = equipped + ITEM_OFFSET;
+        }
         if (kit != ITEM_OFFSET || composition != hiddenWeaponComposition)
         {
             if (kit != realWeaponKit) rebuildModel = true;
@@ -326,6 +390,14 @@ public class RapidHolsterPlugin extends Plugin
     private static int itemId(int kit)
     {
         return kit >= ITEM_OFFSET ? kit - ITEM_OFFSET : -1;
+    }
+
+    private int wornItemId(int slot)
+    {
+        ItemContainer equipment = client.getItemContainer(InventoryID.EQUIPMENT);
+        if (equipment == null || equipment.getItems().length <= slot
+            || equipment.getItems()[slot] == null) return -1;
+        return equipment.getItems()[slot].getId();
     }
 
     private void hideHeldWeapon()
@@ -357,6 +429,11 @@ public class RapidHolsterPlugin extends Plugin
         if (player == null || player.getPlayerComposition() == null) return;
         PlayerComposition composition = player.getPlayerComposition();
         int kit = composition.getEquipmentIds()[SHIELD_SLOT];
+        if (kit <= ITEM_OFFSET && composition != hiddenShieldComposition)
+        {
+            int equipped = wornItemId(SHIELD_SLOT);
+            if (equipped >= 0) kit = equipped + ITEM_OFFSET;
+        }
         if (kit != ITEM_OFFSET || composition != hiddenShieldComposition)
         {
             if (kit != realShieldKit) rebuildModel = true;
@@ -816,10 +893,9 @@ public class RapidHolsterPlugin extends Plugin
         }
     }
 
-    /** RuneLite objects do not inherit an actor's animated skeleton. Build a
-     * small coordinate frame from fixed vertices on the player's upper torso,
-     * then apply that frame to every weapon vertex. This makes the weapon share
-     * the torso's translation, pitch, roll and run-cycle sway.
+    /** RuneLite objects do not inherit an actor's animated skeleton. Track
+     * upper torso vertices for run-cycle movement while keeping the fitted
+     * weapon angle steady as the player turns.
      */
     private void positionOnAnimatedTorso(Player player)
     {
@@ -962,30 +1038,21 @@ public class RapidHolsterPlugin extends Plugin
         private void apply(Model playerModel, Model weaponModel,
             float[] baseX, float[] baseY, float[] baseZ)
         {
-            Frame currentFrame = frame(playerModel, left, right, top, bottom);
-            if (currentFrame == null)
-            {
-                return;
-            }
+            // Animation can skew the left/right torso vertices enough to spin
+            // the gear away from the back when the player changes direction.
+            // Follow the torso translation while preserving the fitted angle;
+            // the RuneLite object already inherits the player's orientation.
             Vec3 currentAnchor = average(playerModel, torso);
+            Vec3 translation = currentAnchor.subtract(referenceAnchor);
             float[] x = weaponModel.getVerticesX();
             float[] y = weaponModel.getVerticesY();
             float[] z = weaponModel.getVerticesZ();
             int count = Math.min(weaponModel.getVerticesCount(), baseX.length);
             for (int i = 0; i < count; i++)
             {
-                Vec3 offset = new Vec3(baseX[i] - referenceAnchor.x,
-                    baseY[i] - referenceAnchor.y, baseZ[i] - referenceAnchor.z);
-                double alongRight = offset.dot(referenceFrame.right);
-                double alongUp = offset.dot(referenceFrame.up);
-                double alongForward = offset.dot(referenceFrame.forward);
-                Vec3 transformed = currentAnchor
-                    .add(currentFrame.right.scale(alongRight))
-                    .add(currentFrame.up.scale(alongUp))
-                    .add(currentFrame.forward.scale(alongForward));
-                x[i] = (float) transformed.x;
-                y[i] = (float) transformed.y;
-                z[i] = (float) transformed.z;
+                x[i] = (float) (baseX[i] + translation.x);
+                y[i] = (float) (baseY[i] + translation.y);
+                z[i] = (float) (baseZ[i] + translation.z);
             }
         }
 
