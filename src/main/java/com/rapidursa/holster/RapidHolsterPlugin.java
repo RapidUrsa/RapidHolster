@@ -40,8 +40,8 @@ import net.runelite.client.ui.NavigationButton;
 @Slf4j
 @PluginDescriptor(
     name = "Rapid Holster",
-    description = "Visually holster equipped weapons on your character",
-    tags = {"weapon", "holster", "sheathe", "cosmetic", "fashionscape"}
+    description = "Visually holster equipped weapons and off-hand items on your character",
+    tags = {"weapon", "shield", "offhand", "holster", "sheathe", "cosmetic", "fashionscape"}
 )
 public class RapidHolsterPlugin extends Plugin
 {
@@ -53,6 +53,7 @@ public class RapidHolsterPlugin extends Plugin
     private static final int TWISTED_BOW = ItemID.TWISTED_BOW;
     private static final int ITEM_OFFSET = PlayerComposition.ITEM_OFFSET;
     private static final int WEAPON_SLOT = KitType.WEAPON.getIndex();
+    private static final int SHIELD_SLOT = KitType.SHIELD.getIndex();
     private static final int CAPE_SLOT = KitType.CAPE.getIndex();
     private static final int AMBIENT = 64;
     private static final int CONTRAST = 768;
@@ -74,7 +75,11 @@ public class RapidHolsterPlugin extends Plugin
     private NavigationButton customNavigation;
 
     private RuneLiteObject holsteredWeapon;
+    private RuneLiteObject holsteredShield;
     private int realWeaponKit;
+    private PlayerComposition hiddenWeaponComposition;
+    private int realShieldKit;
+    private PlayerComposition hiddenShieldComposition;
     private int realCapeKit;
     private PlayerComposition hiddenCapeComposition;
     private boolean applyingAppearance;
@@ -86,11 +91,16 @@ public class RapidHolsterPlugin extends Plugin
     private float[] baseWeaponX;
     private float[] baseWeaponY;
     private float[] baseWeaponZ;
+    private Model holsteredShieldModel;
+    private float[] baseShieldX;
+    private float[] baseShieldY;
+    private float[] baseShieldZ;
+    private int builtShieldItemId = -1;
     private TorsoRig torsoRig;
     private boolean torsoRigCapturedWhileIdle;
     private int builtWeaponItemId = -1;
     private WeaponGroup weaponGroup = WeaponGroup.NONE;
-    private enum WeaponGroup { NONE, STAFF, BOW, TWO_HANDED }
+    private enum WeaponGroup { NONE, STAFF, BOW, CROSSBOW, TWO_HANDED, ONE_HANDED, WAND }
 
     @Provides
     RapidHolsterConfig provideConfig(ConfigManager configManager)
@@ -123,7 +133,9 @@ public class RapidHolsterPlugin extends Plugin
         clientThread.invoke(() -> {
             restoreCape();
             restoreHeldWeapon();
+            restoreShield();
             destroyObject();
+            destroyShield();
             modelRepository.unload();
             restoreNaturalPose();
         });
@@ -141,7 +153,11 @@ public class RapidHolsterPlugin extends Plugin
             || event.getGameState() == GameState.HOPPING)
         {
             destroyObject();
+            destroyShield();
             realWeaponKit = 0;
+            hiddenWeaponComposition = null;
+            restoreShield();
+            realShieldKit = 0;
             restoreCape();
             weaponGroup = WeaponGroup.NONE;
             combatDrawTicks = 0;
@@ -174,12 +190,14 @@ public class RapidHolsterPlugin extends Plugin
     public void onBeforeRender(BeforeRender event)
     {
         Player player = client.getLocalPlayer();
-        if (holsteredWeapon == null || player == null || !holsteredWeapon.isActive())
+        if (player == null || (holsteredWeapon == null || !holsteredWeapon.isActive())
+            && (holsteredShield == null || !holsteredShield.isActive()))
         {
             return;
         }
         positionOnAnimatedTorso(player);
-        applyUnarmedPose(player);
+        if (holsteredWeapon != null && holsteredWeapon.isActive())
+            applyUnarmedPose(player);
     }
 
     @Subscribe
@@ -222,52 +240,70 @@ public class RapidHolsterPlugin extends Plugin
 
         updateCape(player.getPlayerComposition());
         captureRealWeapon();
+        captureRealShield();
         int weaponItemId = itemId(realWeaponKit);
+        int shieldItemId = itemId(realShieldKit);
         WeaponGroup detected = detectWeaponGroup(weaponItemId);
         if (detected == WeaponGroup.NONE && itemOverride(weaponItemId) != null)
             detected = WeaponGroup.TWO_HANDED;
         if (detected != weaponGroup) rebuildModel = true;
         weaponGroup = detected;
         boolean supported = isSupportedWeapon(weaponItemId);
-        if (!config.holstered() || !supported)
+        if (!config.holstered() || (!supported && shieldItemId < 0))
         {
             restoreHeldWeapon();
+            restoreShield();
             restoreNaturalPose();
             destroyObject();
+            destroyShield();
             return;
         }
         if (combatDrawTicks > 0 || player.getAnimation() != -1)
         {
             restoreHeldWeapon();
+            restoreShield();
             restoreNaturalPose();
             if (holsteredWeapon != null)
             {
                 holsteredWeapon.setActive(false);
             }
+            if (holsteredShield != null) holsteredShield.setActive(false);
             return;
         }
 
         ensureModelRepository();
-        if (holsteredWeapon == null || rebuildModel || builtWeaponItemId != weaponItemId)
+        boolean updateModels = rebuildModel;
+        if (supported && (holsteredWeapon == null || updateModels || builtWeaponItemId != weaponItemId))
         {
             rebuildObject(weaponItemId);
         }
-        if (holsteredWeapon == null)
+        if (shieldItemId >= 0 && (holsteredShield == null || updateModels || builtShieldItemId != shieldItemId))
         {
-            restoreHeldWeapon();
+            rebuildShield(shieldItemId);
+        }
+        if (!supported) { restoreHeldWeapon(); destroyObject(); }
+        if (shieldItemId < 0) { restoreShield(); destroyShield(); }
+        rebuildModel = false;
+        if (supported && holsteredWeapon == null) restoreHeldWeapon();
+        if (shieldItemId >= 0 && holsteredShield == null) restoreShield();
+        boolean weaponReady = supported && holsteredWeapon != null;
+        boolean shieldReady = shieldItemId >= 0 && holsteredShield != null;
+        if (!weaponReady && !shieldReady)
+        {
+            restoreNaturalPose();
             return;
         }
-        captureNaturalPose(player);
-        hideHeldWeapon();
-        applyUnarmedPose(player);
-        if (holsteredWeapon != null)
+        if (weaponReady)
         {
-            positionOnAnimatedTorso(player);
-            if (!holsteredWeapon.isActive())
-            {
-                holsteredWeapon.setActive(true);
-            }
+            captureNaturalPose(player);
+            hideHeldWeapon();
+            applyUnarmedPose(player);
         }
+        else restoreNaturalPose();
+        if (shieldReady) hideShield();
+        positionOnAnimatedTorso(player);
+        if (weaponReady && !holsteredWeapon.isActive()) holsteredWeapon.setActive(true);
+        if (shieldReady && !holsteredShield.isActive()) holsteredShield.setActive(true);
     }
 
     private void captureRealWeapon()
@@ -277,11 +313,13 @@ public class RapidHolsterPlugin extends Plugin
         {
             return;
         }
-        int kit = player.getPlayerComposition().getEquipmentIds()[WEAPON_SLOT];
-        if (kit != ITEM_OFFSET && kit != realWeaponKit)
+        PlayerComposition composition = player.getPlayerComposition();
+        int kit = composition.getEquipmentIds()[WEAPON_SLOT];
+        if (kit != ITEM_OFFSET || composition != hiddenWeaponComposition)
         {
+            if (kit != realWeaponKit) rebuildModel = true;
             realWeaponKit = kit;
-            rebuildModel = true;
+            hiddenWeaponComposition = null;
         }
     }
 
@@ -292,20 +330,58 @@ public class RapidHolsterPlugin extends Plugin
 
     private void hideHeldWeapon()
     {
+        Player player = client.getLocalPlayer();
+        if (player == null || player.getPlayerComposition() == null) return;
+        hiddenWeaponComposition = player.getPlayerComposition();
         setWeaponKit(ITEM_OFFSET);
     }
 
     private void restoreHeldWeapon()
     {
-        if (realWeaponKit > 0)
-        {
+        Player player = client.getLocalPlayer();
+        if (hiddenWeaponComposition != null && player != null
+            && player.getPlayerComposition() == hiddenWeaponComposition
+            && hiddenWeaponComposition.getEquipmentIds()[WEAPON_SLOT] == ITEM_OFFSET)
             setWeaponKit(realWeaponKit);
-        }
+        hiddenWeaponComposition = null;
     }
 
     private void setWeaponKit(int kit)
     {
         setEquipmentKit(WEAPON_SLOT, kit);
+    }
+
+    private void captureRealShield()
+    {
+        Player player = client.getLocalPlayer();
+        if (player == null || player.getPlayerComposition() == null) return;
+        PlayerComposition composition = player.getPlayerComposition();
+        int kit = composition.getEquipmentIds()[SHIELD_SLOT];
+        if (kit != ITEM_OFFSET || composition != hiddenShieldComposition)
+        {
+            if (kit != realShieldKit) rebuildModel = true;
+            realShieldKit = kit;
+            hiddenShieldComposition = null;
+        }
+    }
+
+    private void hideShield()
+    {
+        if (realShieldKit < ITEM_OFFSET) return;
+        Player player = client.getLocalPlayer();
+        if (player == null || player.getPlayerComposition() == null) return;
+        hiddenShieldComposition = player.getPlayerComposition();
+        setEquipmentKit(SHIELD_SLOT, ITEM_OFFSET);
+    }
+
+    private void restoreShield()
+    {
+        Player player = client.getLocalPlayer();
+        if (hiddenShieldComposition != null && player != null
+            && player.getPlayerComposition() == hiddenShieldComposition
+            && hiddenShieldComposition.getEquipmentIds()[SHIELD_SLOT] == ITEM_OFFSET)
+            setEquipmentKit(SHIELD_SLOT, realShieldKit);
+        hiddenShieldComposition = null;
     }
 
     private void updateCape(PlayerComposition composition)
@@ -422,9 +498,8 @@ public class RapidHolsterPlugin extends Plugin
 
     private void rebuildObject(int weaponItemId)
     {
-        rebuildModel = false;
         destroyObject();
-        ModelData data = buildWeaponModel(weaponItemId);
+        ModelData data = buildItemModel(weaponItemId, placementFor(weaponItemId));
         if (data == null)
         {
             log.debug("Wearable model for item {} is not available yet", weaponItemId);
@@ -442,7 +517,28 @@ public class RapidHolsterPlugin extends Plugin
         holsteredWeapon.setActive(true);
     }
 
-    private ModelData buildWeaponModel(int itemId)
+    private void rebuildShield(int shieldItemId)
+    {
+        destroyShield();
+        ModelData data = buildItemModel(shieldItemId, placementForOffHand(shieldItemId));
+        if (data == null)
+        {
+            log.debug("Wearable shield model for item {} is not available yet", shieldItemId);
+            return;
+        }
+        builtShieldItemId = shieldItemId;
+        holsteredShield = client.createRuneLiteObject();
+        holsteredShieldModel = data.light(AMBIENT, CONTRAST, LIGHT_X, LIGHT_Y, LIGHT_Z);
+        baseShieldX = holsteredShieldModel.getVerticesX().clone();
+        baseShieldY = holsteredShieldModel.getVerticesY().clone();
+        baseShieldZ = holsteredShieldModel.getVerticesZ().clone();
+        holsteredShield.setModel(holsteredShieldModel);
+        holsteredShield.setRenderMode(Renderable.RENDERMODE_SORTED_NO_DEPTH);
+        holsteredShield.setDrawFrontTilesFirst(true);
+        holsteredShield.setActive(true);
+    }
+
+    private ModelData buildItemModel(int itemId, Placement placement)
     {
         ModelRepository.Entry entry = modelRepository.item(itemId);
         Player player = client.getLocalPlayer();
@@ -481,11 +577,11 @@ public class RapidHolsterPlugin extends Plugin
             : client.mergeModels(parts.toArray(new ModelData[0]));
         if (weapon == null) return null;
         weapon = weapon.cloneVertices();
-        transform(weapon, itemId);
+        transform(weapon, placement);
         return weapon;
     }
 
-    private void transform(ModelData data, int itemId)
+    private void transform(ModelData data, Placement placement)
     {
         float[] x = data.getVerticesX();
         float[] y = data.getVerticesY();
@@ -503,7 +599,6 @@ public class RapidHolsterPlugin extends Plugin
         float cx = (minX + maxX) * .5f;
         float cy = (minY + maxY) * .5f;
         float cz = (minZ + maxZ) * .5f;
-        Placement placement = placementFor(itemId);
         int sideways = placement.sideways;
         int height = placement.height;
         int forward = placement.forward;
@@ -538,10 +633,16 @@ public class RapidHolsterPlugin extends Plugin
         return itemId(realWeaponKit);
     }
 
+    int getEquippedShieldItemId()
+    {
+        return itemId(realShieldKit);
+    }
+
     boolean isHolstered()
     {
-        return config.holstered() && isSupportedWeapon(getEquippedWeaponItemId())
-            && combatDrawTicks == 0 && holsteredWeapon != null && holsteredWeapon.isActive();
+        return config.holstered() && combatDrawTicks == 0
+            && (holsteredWeapon != null && holsteredWeapon.isActive()
+                || holsteredShield != null && holsteredShield.isActive());
     }
 
     void toggleHolstered()
@@ -554,6 +655,11 @@ public class RapidHolsterPlugin extends Plugin
     {
         return itemId >= 0 && itemId == getEquippedWeaponItemId()
             && weaponGroup != WeaponGroup.NONE;
+    }
+
+    boolean hasHolsterableGear()
+    {
+        return isSupportedWeapon(getEquippedWeaponItemId()) || getEquippedShieldItemId() >= 0;
     }
 
     private static boolean isShadow(int itemId)
@@ -576,13 +682,19 @@ public class RapidHolsterPlugin extends Plugin
         if (id == TWISTED_BOW) return WeaponGroup.BOW;
         if (id == SOULREAPER_AXE) return WeaponGroup.TWO_HANDED;
         String name = itemManager.getItemComposition(id).getName().toLowerCase(Locale.ROOT);
+        // Crossbows need their own hip preset even when equipment metadata
+        // describes the crossbow as two-handed.
+        if (name.contains("crossbow")) return WeaponGroup.CROSSBOW;
+        if (name.contains("wand")) return WeaponGroup.WAND;
         if (name.contains("staff") || name.contains("trident") || name.contains("sceptre")
-            || name.contains("scepter") || name.contains("wand") || name.contains("eye of ayak"))
+            || name.contains("scepter") || name.contains("eye of ayak"))
             return WeaponGroup.STAFF;
-        if (name.contains("bow") && !name.contains("crossbow")) return WeaponGroup.BOW;
+        if (name.contains("bow")) return WeaponGroup.BOW;
         ItemStats stats = itemManager.getItemStats(id);
         if (stats != null && stats.getEquipment() != null && stats.getEquipment().isTwoHanded())
             return WeaponGroup.TWO_HANDED;
+        if (stats != null && stats.getEquipment() != null && stats.getEquipment().getSlot() == 3)
+            return WeaponGroup.ONE_HANDED;
         return WeaponGroup.NONE;
     }
 
@@ -617,14 +729,54 @@ public class RapidHolsterPlugin extends Plugin
         return categoryPlacement(itemId);
     }
 
+    private Placement placementForOffHand(int itemId)
+    {
+        Placement override = itemOverride(itemId);
+        return override != null ? override : offHandPlacement(itemId);
+    }
+
     int[] defaultPlacement(int itemId)
     {
-        Placement p = categoryPlacement(itemId);
+        ItemStats stats = itemManager.getItemStats(itemId);
+        boolean offHand = itemId == getEquippedShieldItemId()
+            || stats != null && stats.getEquipment() != null && stats.getEquipment().getSlot() == 5;
+        Placement p = offHand ? offHandPlacement(itemId) : categoryPlacement(itemId);
         return new int[]{p.sideways, p.height, p.forward, p.pitch, p.yaw, p.roll, p.scale};
+    }
+
+    private Placement offHandPlacement(int itemId)
+    {
+        String name = itemManager.getItemComposition(itemId).getName().toLowerCase(Locale.ROOT);
+        // Some shields have a game-specific name without "shield" in it.
+        if (name.contains("shield") || name.contains("ward")
+            || name.contains("buckler") || name.contains("toktz-ket-xil"))
+            return shieldPlacement();
+        return new Placement(config.offHandHipSideways(), config.offHandHipHeight(),
+            config.offHandHipForward(), config.offHandHipPitch(), config.offHandHipYaw(),
+            config.offHandHipRoll(), config.offHandHipScale());
+    }
+
+    private Placement shieldPlacement()
+    {
+        return new Placement(config.shieldSideways(), config.shieldHeight(),
+            config.shieldForward(), config.shieldPitch(), config.shieldYaw(),
+            config.shieldRoll(), config.shieldScale());
     }
 
     private Placement categoryPlacement(int itemId)
     {
+        if (detectWeaponGroup(itemId) == WeaponGroup.CROSSBOW)
+            return new Placement(config.crossbowSideways(), config.crossbowHeight(),
+                config.crossbowForward(), config.crossbowPitch(), config.crossbowYaw(),
+                config.crossbowRoll(), config.crossbowScale());
+        if (detectWeaponGroup(itemId) == WeaponGroup.ONE_HANDED)
+            return new Placement(config.oneHandSideways(), config.oneHandHeight(),
+                config.oneHandForward(), config.oneHandPitch(), config.oneHandYaw(),
+                config.oneHandRoll(), config.oneHandScale());
+        if (detectWeaponGroup(itemId) == WeaponGroup.WAND)
+            return new Placement(config.wandSideways(), config.wandHeight(),
+                config.wandForward(), config.wandPitch(), config.wandYaw(),
+                config.wandRoll(), config.wandScale());
         if (detectWeaponGroup(itemId) == WeaponGroup.STAFF)
         {
             return new Placement(config.shadowSideways(), config.shadowHeight(),
@@ -673,8 +825,8 @@ public class RapidHolsterPlugin extends Plugin
     {
         LocalPoint playerPoint = player.getLocalLocation();
         Model playerModel = player.getModel();
-        if (playerPoint == null || playerModel == null || holsteredWeapon == null
-            || holsteredModel == null || baseWeaponX == null)
+        if (playerPoint == null || playerModel == null
+            || holsteredWeapon == null && holsteredShield == null)
         {
             return;
         }
@@ -693,22 +845,29 @@ public class RapidHolsterPlugin extends Plugin
             }
         }
 
-        if (torsoRig != null)
-        {
-            torsoRig.apply(playerModel, holsteredModel,
-                baseWeaponX, baseWeaponY, baseWeaponZ);
-            // The GPU plugin treats RuneLiteObjects as dynamic models. Reassign
-            // the model after changing its vertex arrays so the current frame is
-            // uploaded even when the object itself has not changed location.
-            holsteredModel.calculateBoundsCylinder();
-            holsteredWeapon.setModel(holsteredModel);
-        }
-
         int orientation = player.getCurrentOrientation();
         int plane = player.getWorldLocation().getPlane();
-        holsteredWeapon.setLocation(playerPoint, plane);
-        holsteredWeapon.setZ(Perspective.getTileHeight(client, playerPoint, plane));
-        holsteredWeapon.setOrientation(orientation);
+        if (holsteredWeapon != null)
+            positionItem(playerModel, holsteredWeapon, holsteredModel, baseWeaponX,
+                baseWeaponY, baseWeaponZ, playerPoint, plane, orientation);
+        if (holsteredShield != null)
+            positionItem(playerModel, holsteredShield, holsteredShieldModel, baseShieldX,
+                baseShieldY, baseShieldZ, playerPoint, plane, orientation);
+    }
+
+    private void positionItem(Model playerModel, RuneLiteObject object, Model itemModel,
+        float[] baseX, float[] baseY, float[] baseZ, LocalPoint location,
+        int plane, int orientation)
+    {
+        if (torsoRig != null && itemModel != null && baseX != null)
+        {
+            torsoRig.apply(playerModel, itemModel, baseX, baseY, baseZ);
+            itemModel.calculateBoundsCylinder();
+            object.setModel(itemModel);
+        }
+        object.setLocation(location, plane);
+        object.setZ(Perspective.getTileHeight(client, location, plane));
+        object.setOrientation(orientation);
     }
 
     private static final class TorsoRig
@@ -928,8 +1087,30 @@ public class RapidHolsterPlugin extends Plugin
         baseWeaponX = null;
         baseWeaponY = null;
         baseWeaponZ = null;
-        torsoRig = null;
-        torsoRigCapturedWhileIdle = false;
+        if (holsteredShield == null)
+        {
+            torsoRig = null;
+            torsoRigCapturedWhileIdle = false;
+        }
         builtWeaponItemId = -1;
+    }
+
+    private void destroyShield()
+    {
+        if (holsteredShield != null)
+        {
+            holsteredShield.setActive(false);
+            holsteredShield = null;
+        }
+        holsteredShieldModel = null;
+        baseShieldX = null;
+        baseShieldY = null;
+        baseShieldZ = null;
+        if (holsteredWeapon == null)
+        {
+            torsoRig = null;
+            torsoRigCapturedWhileIdle = false;
+        }
+        builtShieldItemId = -1;
     }
 }

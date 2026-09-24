@@ -56,11 +56,12 @@ final class HolsterToggleOverlay extends Overlay implements MouseListener
     public Dimension render(Graphics2D graphics)
     {
         RapidHolsterPlugin current = plugin;
-        int itemId = current == null ? -1 : current.getEquippedWeaponItemId();
-        if (!config.showButton() || current == null || !current.isSupportedWeapon(itemId))
+        if (!config.showButton() || current == null || !current.hasHolsterableGear())
         {
             return null;
         }
+        int itemId = current.isSupportedWeapon(current.getEquippedWeaponItemId())
+            ? current.getEquippedWeaponItemId() : current.getEquippedShieldItemId();
         if (itemId != cachedItemId)
         {
             cachedItemId = itemId;
@@ -100,7 +101,7 @@ final class HolsterToggleOverlay extends Overlay implements MouseListener
     public MouseEvent mousePressed(MouseEvent event)
     {
         if (config.showButton() && plugin != null
-            && plugin.isSupportedWeapon(plugin.getEquippedWeaponItemId())
+            && plugin.hasHolsterableGear()
             && !event.isAltDown() && SwingUtilities.isLeftMouseButton(event)
             && getBounds().contains(event.getPoint()))
         {

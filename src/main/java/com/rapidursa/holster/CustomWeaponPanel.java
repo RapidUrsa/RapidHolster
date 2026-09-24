@@ -32,7 +32,7 @@ final class CustomWeaponPanel extends PluginPanel
     private final JCheckBox hideCape = new JCheckBox("Hide cape");
     private final DefaultListModel<Choice> matches = new DefaultListModel<>();
     private final JList<Choice> results = new JList<>(matches);
-    private final JLabel status = new JLabel("Search for a weapon to add.");
+    private final JLabel status = new JLabel("Search for a weapon or off-hand item.");
     private final JPanel cards = new JPanel();
     // Only accessed on the Swing event thread; writes use immutable snapshots.
     private final Map<Integer, int[]> saved = new LinkedHashMap<>();
@@ -56,8 +56,8 @@ final class CustomWeaponPanel extends PluginPanel
                     manager.setConfiguration(RapidHolsterPlugin.CONFIG_GROUP, "hideCape", selected);
             });
         });
-        top.add(new JLabel("Custom weapons")); top.add(query);
-        query.setToolTipText("Weapon name or item ID; press Enter to search");
+        top.add(new JLabel("Custom gear")); top.add(query);
+        query.setToolTipText("Weapon or off-hand item name or ID; press Enter to search");
         query.addActionListener(e -> search());
         JButton search = new JButton("Search");
         search.addActionListener(e -> search()); top.add(search);
@@ -79,7 +79,7 @@ final class CustomWeaponPanel extends PluginPanel
         JScrollPane searchResults = new JScrollPane(results);
         searchResults.setPreferredSize(new Dimension(210, 130));
         top.add(searchResults);
-        JButton apply = new JButton("Apply / Add weapon");
+        JButton apply = new JButton("Apply / Add item");
         apply.addActionListener(e -> addSelected()); top.add(apply);
         results.getInputMap().put(KeyStroke.getKeyStroke("ENTER"), "apply");
         results.getActionMap().put("apply", new AbstractAction()
@@ -247,10 +247,10 @@ final class CustomWeaponPanel extends PluginPanel
                     || item.getNote() != -1 || item.getPlaceholderTemplateId() != -1) continue;
                 ItemStats stats = items.getItemStats(id);
                 String[] actions = item.getInventoryActions();
-                boolean weapon = stats != null && stats.getEquipment() != null
-                    ? stats.getEquipment().getSlot() == 3
+                boolean gear = stats != null && stats.getEquipment() != null
+                    ? stats.getEquipment().getSlot() == 3 || stats.getEquipment().getSlot() == 5
                     : actions != null && Arrays.asList(actions).contains("Wield");
-                if (weapon) found.add(choice(id));
+                if (gear) found.add(choice(id));
             }
             cursor[0] = end;
             if (end < client.getItemCount()) return false;
@@ -259,7 +259,7 @@ final class CustomWeaponPanel extends PluginPanel
             SwingUtilities.invokeLater(() -> {
                 if (generation != token || searchSequence != searchId || !query.getText().trim().equals(term)) return;
                 matches.clear(); found.stream().limit(100).forEach(matches::addElement);
-                status.setText(found.isEmpty() ? "No weapons found." : "Select a result and click Apply.");
+                status.setText(found.isEmpty() ? "No weapons or off-hand items found." : "Select a result and click Apply.");
                 if (!found.isEmpty()) { results.setSelectedIndex(0); results.requestFocusInWindow(); }
             });
             return true;
