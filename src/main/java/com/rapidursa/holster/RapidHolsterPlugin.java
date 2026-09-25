@@ -196,6 +196,10 @@ public class RapidHolsterPlugin extends Plugin
     {
         if (mountedRiderOwnsHolsters())
         {
+            // Mounts determines idle/walking from the real player state. Restore
+            // Holster's temporary unarmed pose before releasing the weapon so a
+            // walking override cannot remain latched during the handoff.
+            restoreNaturalPose();
             destroyObject();
             destroyShield();
             return;

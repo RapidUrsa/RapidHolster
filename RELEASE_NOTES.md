@@ -1,6 +1,8 @@
-# Rapid Holster v2.0.1
+# Rapid Holster v2.0.2
 
-- Coordinate holstered weapon rendering with Rapid Mounts v2.0.0 while riding.
-- Restore sheath button on initial login and after dismount.
-- Keep on-foot holstered weapons aligned while running.
+- Keep on-foot holstered weapons attached to the player's live movement while
+  walking and running.
+- Preserve Rapid Mounts' mounted handoff so weapons remain attached to the
+  reconstructed rider instead of falling back to the on-foot position.
+- Keep the sheath button available after login, mounting, and dismounting.
 - Remains usable without Rapid Mounts.
