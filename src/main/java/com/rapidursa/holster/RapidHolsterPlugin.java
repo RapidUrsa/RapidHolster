@@ -897,9 +897,9 @@ public class RapidHolsterPlugin extends Plugin
         }
     }
 
-    /** RuneLite objects do not inherit an actor's animated skeleton. Track
-     * upper torso vertices for run-cycle movement while keeping the fitted
-     * weapon angle steady as the player turns.
+    /** RuneLite objects do not inherit an actor's animated skeleton. Build a
+     * frame from upper torso vertices so gear follows the torso's pitch, roll
+     * and sway while walking and running.
      */
     private void positionOnAnimatedTorso(Player player)
     {
@@ -1042,21 +1042,30 @@ public class RapidHolsterPlugin extends Plugin
         private void apply(Model playerModel, Model weaponModel,
             float[] baseX, float[] baseY, float[] baseZ)
         {
-            // Animation can skew the left/right torso vertices enough to spin
-            // the gear away from the back when the player changes direction.
-            // Follow the torso translation while preserving the fitted angle;
-            // the RuneLite object already inherits the player's orientation.
+            Frame currentFrame = frame(playerModel, left, right, top, bottom);
+            if (currentFrame == null)
+            {
+                return;
+            }
             Vec3 currentAnchor = average(playerModel, torso);
-            Vec3 translation = currentAnchor.subtract(referenceAnchor);
             float[] x = weaponModel.getVerticesX();
             float[] y = weaponModel.getVerticesY();
             float[] z = weaponModel.getVerticesZ();
             int count = Math.min(weaponModel.getVerticesCount(), baseX.length);
             for (int i = 0; i < count; i++)
             {
-                x[i] = (float) (baseX[i] + translation.x);
-                y[i] = (float) (baseY[i] + translation.y);
-                z[i] = (float) (baseZ[i] + translation.z);
+                Vec3 offset = new Vec3(baseX[i] - referenceAnchor.x,
+                    baseY[i] - referenceAnchor.y, baseZ[i] - referenceAnchor.z);
+                double alongRight = offset.dot(referenceFrame.right);
+                double alongUp = offset.dot(referenceFrame.up);
+                double alongForward = offset.dot(referenceFrame.forward);
+                Vec3 transformed = currentAnchor
+                    .add(currentFrame.right.scale(alongRight))
+                    .add(currentFrame.up.scale(alongUp))
+                    .add(currentFrame.forward.scale(alongForward));
+                x[i] = (float) transformed.x;
+                y[i] = (float) transformed.y;
+                z[i] = (float) transformed.z;
             }
         }
 
