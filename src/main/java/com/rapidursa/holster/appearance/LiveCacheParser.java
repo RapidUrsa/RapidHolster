@@ -247,6 +247,7 @@ public final class LiveCacheParser
 				case 16:
 				case 65:
 				case 160:
+				case 251:
 					break; // flag opcodes carry no payload
 				case 12:
 					in.readInt(); // cost
@@ -382,6 +383,7 @@ public final class LiveCacheParser
 				case 95:
 				case 97:
 				case 98:
+				case 99:
 				case 110:
 				case 111:
 				case 112:
@@ -411,6 +413,15 @@ public final class LiveCacheParser
 				case 115:
 					in.readUnsignedByte(); // team
 					break;
+				case 161:
+				{
+					int count = in.readUnsignedShort();
+					for (int i = 0; i < count; i++)
+					{
+						in.readUnsignedShort(); // holding whitelist item
+					}
+					break;
+				}
 				case 200:
 					// EntityOpsLoader.decodeSubOp: byte, byte, string.
 					in.readUnsignedByte();

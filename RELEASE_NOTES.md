@@ -1,3 +1,3 @@
-# Rapid Holster v2.0.3
+# Rapid Holster v2.0.4
 
-Restores the V1 animated torso movement for holstered gear while running and walking. Retains the v2.0.2 mounted handoff and placement features.
+Fixes loading of wearable item definitions after the game cache update by supporting item opcodes 99, 161 and 251. The sheathe button and holstering were confirmed working in-game by RapidUrsa.
