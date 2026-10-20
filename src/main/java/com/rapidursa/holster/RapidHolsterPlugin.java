@@ -3,6 +3,7 @@ package com.rapidursa.holster;
 import com.google.inject.Provides;
 import com.rapidursa.holster.appearance.ModelRepository;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import net.runelite.client.game.ItemManager;
@@ -12,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.InventoryID;
+import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.ItemID;
 import net.runelite.api.Model;
@@ -98,9 +100,11 @@ public class RapidHolsterPlugin extends Plugin
     private float[] baseShieldY;
     private float[] baseShieldZ;
     private int builtShieldItemId = -1;
+    private int builtShieldRecolour;
     private TorsoRig torsoRig;
     private boolean torsoRigCapturedWhileIdle;
     private int builtWeaponItemId = -1;
+    private int builtWeaponRecolour;
     private WeaponGroup weaponGroup = WeaponGroup.NONE;
     private enum WeaponGroup { NONE, STAFF, BOW, CROSSBOW, TWO_HANDED, ONE_HANDED, WAND }
 
@@ -333,11 +337,13 @@ public class RapidHolsterPlugin extends Plugin
 
         ensureModelRepository();
         boolean updateModels = rebuildModel;
-        if (supported && (holsteredWeapon == null || updateModels || builtWeaponItemId != weaponItemId))
+        if (supported && (holsteredWeapon == null || updateModels || builtWeaponItemId != weaponItemId
+            || builtWeaponRecolour != recolourHash(weaponItemId)))
         {
             rebuildObject(weaponItemId);
         }
-        if (shieldItemId >= 0 && (holsteredShield == null || updateModels || builtShieldItemId != shieldItemId))
+        if (shieldItemId >= 0 && (holsteredShield == null || updateModels || builtShieldItemId != shieldItemId
+            || builtShieldRecolour != recolourHash(shieldItemId)))
         {
             rebuildShield(shieldItemId);
         }
@@ -587,6 +593,7 @@ public class RapidHolsterPlugin extends Plugin
             return;
         }
         builtWeaponItemId = weaponItemId;
+        builtWeaponRecolour = recolourHash(weaponItemId);
         holsteredWeapon = client.createRuneLiteObject();
         holsteredModel = data.light(AMBIENT, CONTRAST, LIGHT_X, LIGHT_Y, LIGHT_Z);
         baseWeaponX = holsteredModel.getVerticesX().clone();
@@ -608,6 +615,7 @@ public class RapidHolsterPlugin extends Plugin
             return;
         }
         builtShieldItemId = shieldItemId;
+        builtShieldRecolour = recolourHash(shieldItemId);
         holsteredShield = client.createRuneLiteObject();
         holsteredShieldModel = data.light(AMBIENT, CONTRAST, LIGHT_X, LIGHT_Y, LIGHT_Z);
         baseShieldX = holsteredShieldModel.getVerticesX().clone();
@@ -617,6 +625,13 @@ public class RapidHolsterPlugin extends Plugin
         holsteredShield.setRenderMode(Renderable.RENDERMODE_SORTED_NO_DEPTH);
         holsteredShield.setDrawFrontTilesFirst(true);
         holsteredShield.setActive(true);
+    }
+
+    private int recolourHash(int itemId)
+    {
+        ItemComposition item = client.getItemDefinition(itemId);
+        return Arrays.deepHashCode(new Object[]{item.getColorToReplace(), item.getColorToReplaceWith(),
+            item.getTextureToReplace(), item.getTextureToReplaceWith()});
     }
 
     private ModelData buildItemModel(int itemId, Placement placement)
@@ -633,23 +648,28 @@ public class RapidHolsterPlugin extends Plugin
             return null;
         }
 
+        // Recolours come from the live definition, not the cache parse, so
+        // plugins that edit it (e.g. Glamourer) show on holstered gear too.
+        ItemComposition item = client.getItemDefinition(itemId);
+        short[] cf = item.getColorToReplace(), cr = item.getColorToReplaceWith();
+        short[] tf = item.getTextureToReplace(), tr = item.getTextureToReplaceWith();
         List<ModelData> parts = new ArrayList<>();
         for (int id : ids)
         {
             if (id < 0) continue;
             ModelData part = client.loadModelData(id);
             if (part == null) continue;
-            if (entry.cf != null && entry.cr != null)
+            if (cf != null && cr != null)
             {
                 part = part.cloneColors();
-                for (int i = 0; i < Math.min(entry.cf.length, entry.cr.length); i++)
-                    part.recolor(entry.cf[i], entry.cr[i]);
+                for (int i = 0; i < Math.min(cf.length, cr.length); i++)
+                    part.recolor(cf[i], cr[i]);
             }
-            if (entry.tf != null && entry.tr != null)
+            if (tf != null && tr != null)
             {
                 part = part.cloneTextures();
-                for (int i = 0; i < Math.min(entry.tf.length, entry.tr.length); i++)
-                    part.retexture(entry.tf[i], entry.tr[i]);
+                for (int i = 0; i < Math.min(tf.length, tr.length); i++)
+                    part.retexture(tf[i], tr[i]);
             }
             parts.add(part);
         }
