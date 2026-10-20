@@ -57,11 +57,13 @@ public class RapidHolsterPlugin extends Plugin
     private static final int WEAPON_SLOT = KitType.WEAPON.getIndex();
     private static final int SHIELD_SLOT = KitType.SHIELD.getIndex();
     private static final int CAPE_SLOT = KitType.CAPE.getIndex();
+    // Actor lighting, matching the worn model the player itself is lit with.
+    // The item values (768, -50, -10, -50) are for inventory and ground models.
     private static final int AMBIENT = 64;
-    private static final int CONTRAST = 768;
-    private static final int LIGHT_X = -50;
-    private static final int LIGHT_Y = -10;
-    private static final int LIGHT_Z = -50;
+    private static final int CONTRAST = 850;
+    private static final int LIGHT_X = -30;
+    private static final int LIGHT_Y = -50;
+    private static final int LIGHT_Z = -30;
 
     @Inject private Client client;
     @Inject private ClientThread clientThread;
